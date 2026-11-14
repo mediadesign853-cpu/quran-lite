@@ -1,3 +1,9 @@
+# Response policy for the hosted PWA (Electron sends its own stricter app:// policy).
+/*
+  Content-Security-Policy: default-src 'none'; base-uri 'self'; object-src 'none'; frame-src 'none'; frame-ancestors 'none'; form-action 'none'; script-src 'self'; style-src 'self'; style-src-elem 'self'; style-src-attr 'unsafe-inline'; img-src 'self'; font-src 'self'; connect-src 'self'; worker-src 'self'; manifest-src 'self'; media-src 'none'
+  Referrer-Policy: no-referrer
+  X-Content-Type-Options: nosniff
+
 # Cache rules for Netlify / Cloudflare Pages (other hosts: see README.md, "Publishing the PWA").
 # The files that decide whether an update exists must never be served from an old cache:
 /sw.js

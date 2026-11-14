@@ -1,6 +1,16 @@
 // Desktop shell (Electron). The web app (electron/dist, made by `npm run prepare:electron`) is served
 // through the private address app://quran/, so it runs from files, without a server and without internet.
-const { app, BrowserWindow, Menu, shell, protocol, ipcMain, clipboard } = require('electron');
+const { app, BrowserWindow, Menu, shell, protocol, ipcMain, clipboard, session } = require('electron');
+const { isInternalAppUrl, allowPermissionRequest, allowPermissionCheck } = require('./security.cjs');
+const { createAppProtocolHandler, createPageProtocolHandler } = require('./protocol-handlers.cjs');
+
+// Only the primary process may initialize storage, protocols, windows, or IPC.
+// Returning here is important: app.quit() alone does not stop module execution.
+if (!app.requestSingleInstanceLock()) {
+  app.quit();
+  return;
+}
+
 const path = require('path');
 const fs = require('fs');
 const { execFile } = require('child_process');
@@ -22,7 +32,6 @@ protocol.registerSchemesAsPrivileged([
   { scheme: 'qpage', privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true, stream: true } },
 ]);
 
-if (!app.requestSingleInstanceLock()) app.quit();
 
 // The web app: next to this file, both when running from the project and inside the installed app.asar.
 const ROOT = path.resolve(__dirname, 'dist');
@@ -59,7 +68,7 @@ function writeFootnoteLog(level, details) {
 }
 
 /** Insert an ayah and its address as a native Word/InDesign footnote (Windows desktop only). */
-function insertNativeFootnote(target, payload) {
+async function insertNativeFootnote(target, payload) {
   if (process.platform !== 'win32') {
     return Promise.resolve({ ok: false, message: 'درج خودکار پاورقی فقط در نسخه دسکتاپ ویندوز پشتیبانی می‌شود.' });
   }
@@ -70,7 +79,16 @@ function insertNativeFootnote(target, payload) {
   }
 
   const fallbackText = payload.reference ? `${payload.text} ${payload.reference}` : payload.text;
-  clipboard.writeText(fallbackText);
+  try {
+    await clipboard.writeText(fallbackText);
+  } catch (error) {
+    // Native footnote insertion can still succeed even if the clipboard is unavailable.
+    writeFootnoteLog('warning', {
+      target,
+      reason: 'clipboard-write-failed',
+      message: error?.message || String(error),
+    });
+  }
 
   let payloadPath;
   try {
@@ -143,12 +161,6 @@ function insertNativeFootnote(target, payload) {
     );
   });
 }
-const MIME = {
-  '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.css': 'text/css', '.json': 'application/json',
-  '.png': 'image/png', '.webp': 'image/webp', '.svg': 'image/svg+xml', '.ico': 'image/x-icon',
-  '.woff': 'font/woff', '.woff2': 'font/woff2', '.otf': 'font/otf', '.gz': 'application/octet-stream',
-  '.txt': 'text/plain; charset=utf-8',
-};
 
 /** True only when page images really exist, so the app shows the page button's feature only then. */
 function pageImagesExist() {
@@ -164,16 +176,22 @@ function pageImagesExist() {
   }
 }
 
-async function readFile(file, fallbackType) {
-  try {
-    const body = await fs.promises.readFile(file);
-    return new Response(body, { headers: { 'content-type': MIME[path.extname(file).toLowerCase()] || fallbackType } });
-  } catch {
-    return new Response('not found', { status: 404 });
-  }
-}
 
 let win;
+let secondInstancePendingFocus = false;
+
+function focusMainWindow() {
+  if (!win || win.isDestroyed()) {
+    secondInstancePendingFocus = true;
+    return;
+  }
+  if (win.isMinimized()) win.restore();
+  if (!win.isVisible()) win.show();
+  win.focus();
+}
+
+// Register before app.whenReady so a second launch during startup is not lost.
+app.on('second-instance', focusMainWindow);
 
 function isTrustedRenderer(event) {
   if (!win || win.isDestroyed()) return false;
@@ -201,21 +219,6 @@ function isTrustedRenderer(event) {
   }
 }
 
-function isInternalAppUrl(rawUrl) {
-  try {
-    const url = new URL(rawUrl);
-    return (
-      url.protocol === 'app:' &&
-      url.hostname === 'quran' &&
-      !url.username &&
-      !url.password &&
-      !url.port
-    );
-  } catch {
-    return false;
-  }
-}
-
 function createWindow() {
   Menu.setApplicationMenu(null);
   win = new BrowserWindow({
@@ -230,10 +233,15 @@ function createWindow() {
       preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,
       nodeIntegration: false,
+      sandbox: true,
       spellcheck: false,
     },
   });
   win.loadURL('app://quran/index.html');
+  if (secondInstancePendingFocus) {
+    secondInstancePendingFocus = false;
+    focusMainWindow();
+  }
 
   // Electron has no right-click menu of its own: give text fields Cut / Copy / Paste.
   win.webContents.on('context-menu', (_event, params) => {
@@ -275,6 +283,29 @@ function createWindow() {
 }
 
 app.whenReady().then(() => {
+  // Deny every browser/device permission by default. The only exception is the
+  // clipboard write required by the trusted, top-level app://quran renderer.
+  // Electron needs both handlers for complete permission enforcement.
+  const appSession = session.defaultSession;
+  appSession.setPermissionRequestHandler((webContents, permission, callback, details) => {
+    callback(allowPermissionRequest({
+      webContents,
+      mainWebContents: win?.webContents,
+      permission,
+      details,
+    }));
+  });
+  appSession.setPermissionCheckHandler((webContents, permission, requestingOrigin, details) =>
+    allowPermissionCheck({
+      webContents,
+      mainWebContents: win?.webContents,
+      permission,
+      requestingOrigin,
+      details,
+    })
+  );
+  appSession.setDevicePermissionHandler(() => false);
+
   ipcMain.on('pages:available', (event) => {
     if (!isTrustedRenderer(event)) {
       event.returnValue = false;
@@ -309,35 +340,10 @@ app.whenReady().then(() => {
   });
 
 
-  protocol.handle('app', (request) => {
-    let pathname;
-    try {
-      const parsedUrl = new URL(request.url);
-      if (!isInternalAppUrl(parsedUrl.href)) {
-        return new Response('forbidden', { status: 403 });
-      }
-      pathname = decodeURIComponent(parsedUrl.pathname);
-    } catch {
-      return new Response('bad request', { status: 400 });
-    }
-    if (pathname === '/') pathname = '/index.html';
-    const relativePath = pathname.replace(/^\/+/, '');
-    const file = path.resolve(ROOT, relativePath);
-    const fromRoot = path.relative(ROOT, file);
-    if (fromRoot === '..' || fromRoot.startsWith(`..${path.sep}`) || path.isAbsolute(fromRoot)) {
-      return new Response('forbidden', { status: 403 });
-    }
-    return readFile(file, 'application/octet-stream');
-  });
+  protocol.handle('app', createAppProtocolHandler({ root: ROOT }));
 
-  // qpage://pages/<n>  -> <n>.webp      qpage://pages/boxes.json -> where the ayahs are on the pages
-  protocol.handle('qpage', (request) => {
-    const name = path.basename(new URL(request.url).pathname);
-    if (name === 'boxes.json') return readFile(path.join(PAGES_DIR, 'boxes.json'), 'application/json');
-    const page = Number.parseInt(name, 10);
-    if (!(page >= 1 && page <= 604)) return new Response('not found', { status: 404 });
-    return readFile(path.join(PAGES_DIR, `${page}.webp`), 'image/webp');
-  });
+  // qpage://pages/<n> serves one of the 604 page images; boxes.json supplies highlight rectangles.
+  protocol.handle('qpage', createPageProtocolHandler({ pagesDir: PAGES_DIR }));
 
   createWindow();
   startAutoUpdates(() => win);
@@ -362,9 +368,4 @@ app.whenReady().then(() => {
   }
 });
 
-app.on('second-instance', () => {
-  if (!win) return;
-  if (win.isMinimized()) win.restore();
-  win.focus();
-});
 app.on('window-all-closed', () => app.quit());

@@ -17,7 +17,7 @@ export function useCopyStatus() {
 
       setCopyStatus(detail);
       if (timeout !== undefined) window.clearTimeout(timeout);
-      timeout = window.setTimeout(() => setCopyStatus(null), detail.success ? 3500 : 4500);
+      timeout = window.setTimeout(() => setCopyStatus(null), detail.success ? 3500 : 10000);
     };
 
     window.addEventListener('quran:copy-status', handleCopyStatus);

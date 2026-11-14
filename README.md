@@ -32,9 +32,11 @@ Quran text source: [Tanzil](https://tanzil.net) — CC BY 3.0.
 
 ### Requirements and local build
 
-Use **Node.js 22** and npm. On Windows, run these commands from the project folder:
+Use **Node.js 22.13 or later** and npm 10 or later. Python 3 is also required for the Quran text regression tests. On Windows, run these commands from the project folder:
 
 ```powershell
+npm run refresh:dependencies
+# After the lockfile has been regenerated and committed, future clean installs use:
 npm ci
 npm run check
 npm run dist:win
@@ -105,3 +107,19 @@ Required repository secret: `PORTABLE_UPDATE_PRIVATE_KEY`. The workflow uses Git
 ## Security Note
 
 Ed25519 signature verification and SHA-512 checks protect the **Portable update process**. They are not the same as a Windows Authenticode publisher signature. The current Windows EXE files are not signed with an Authenticode certificate, so Windows SmartScreen may show an “Unknown publisher” warning. Download the application only from the official GitHub Releases page linked above.
+
+
+## Electron security and permissions
+- Browser permissions are denied by default. Only sanitized clipboard writes from the trusted top-level `app://quran` renderer are allowed for the copy feature.
+- Clipboard reads, browser notifications, geolocation, camera, microphone, display capture, USB and HID permissions are denied. Update notifications use Electron's native main-process API.
+- The desktop CSP is scoped to `app://quran` and the `qpage://pages` resource host. Page images and `boxes.json` are served only from that internal host.
+- The hosted PWA uses a separate CSP that permits its same-origin service worker.
+
+## Refreshing dependencies
+Direct dependencies have been moved to maintained stable release lines. TypeScript is kept on 6.0.x because the current stable `typescript-eslint` release supports TypeScript `<6.1.0`; Vite 8 and ESLint 10 require a modern Node runtime. On Windows, run this once from PowerShell in the project folder to regenerate `package-lock.json`, install the packages, run the audit and tests, and rebuild the Electron assets:
+
+```powershell
+npm run refresh:dependencies
+```
+
+Do not run `npm ci` until this refresh has completed successfully; the included lockfile could not be regenerated in this network-restricted build environment.

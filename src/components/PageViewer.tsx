@@ -24,24 +24,23 @@ export default function PageViewer({ target, surahs, language, onClose, onChange
   const fa = language === 'fa';
   const available = hasPageImages();
   const [zoom, setZoom] = useState(1);
-  const [failed, setFailed] = useState(false);
-  const [loaded, setLoaded] = useState(false);
+  const page = target?.page ?? null;
+  const [imageAttempt, setImageAttempt] = useState(0);
+  const [failedImage, setFailedImage] = useState<string | null>(null);
+  const [loadedImage, setLoadedImage] = useState<string | null>(null);
+  const imageKey = page === null ? '' : `${page}:${imageAttempt}`;
+  const failed = page !== null && failedImage === imageKey;
+  const loaded = page !== null && loadedImage === imageKey;
   const [lit, setLit] = useState(false); // is the ayah marked right now?
   const [replay, setReplay] = useState(0); // +1 = mark it again
   const [boxes, setBoxes] = useState<Awaited<ReturnType<typeof loadBoxes>>>(null);
   const markRef = useRef<HTMLDivElement>(null);
-  const page = target?.page ?? null;
   const isOpen = page !== null;
 
   // the ayah coordinates are loaded once, when the viewer is opened for the first time
   useEffect(() => {
     if (isOpen && available) loadBoxes().then(setBoxes);
   }, [isOpen, available]);
-
-  useEffect(() => {
-    setFailed(false);
-    setLoaded(false);
-  }, [page]);
 
   // where the ayah is on this page (empty when it is not on this page or no coordinates exist)
   const rects = useMemo(
@@ -51,13 +50,13 @@ export default function PageViewer({ target, surahs, language, onClose, onChange
 
   // mark the ayah when the page appears, and remove the mark after HIGHLIGHT_MS
   useEffect(() => {
-    if (rects.length === 0) {
-      setLit(false);
-      return;
-    }
-    setLit(true);
-    const timer = setTimeout(() => setLit(false), HIGHLIGHT_MS);
-    return () => clearTimeout(timer);
+    if (rects.length === 0) return;
+    const activateTimer = window.setTimeout(() => setLit(true), 0);
+    const timer = window.setTimeout(() => setLit(false), HIGHLIGHT_MS);
+    return () => {
+      window.clearTimeout(activateTimer);
+      window.clearTimeout(timer);
+    };
   }, [rects, replay]);
 
   // bring the marked lines into view once the image has its size
@@ -65,29 +64,37 @@ export default function PageViewer({ target, surahs, language, onClose, onChange
     if (lit && loaded) markRef.current?.scrollIntoView({ block: 'center', behavior: 'smooth' });
   }, [lit, loaded, zoom]);
 
+  const handleClose = useCallback(() => {
+    setImageAttempt((attempt) => attempt + 1);
+    onClose();
+  }, [onClose]);
+
   const goTo = useCallback(
     (p: number) => {
-      if (p >= 1 && p <= TOTAL_PAGES) onChangePage(p);
+      if (p >= 1 && p <= TOTAL_PAGES && p !== page) {
+        setImageAttempt((attempt) => attempt + 1);
+        onChangePage(p);
+      }
     },
-    [onChangePage]
+    [onChangePage, page]
   );
 
   useEffect(() => {
     if (page === null) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
+      if (e.key === 'Escape') handleClose();
       // Arabic Mushaf: the next page is on the left
       else if (e.key === 'ArrowLeft') goTo(page + 1);
       else if (e.key === 'ArrowRight') goTo(page - 1);
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [page, goTo, onClose]);
+  }, [page, goTo, handleClose]);
 
   if (page === null) return null;
 
   return (
-    <div className="fixed inset-0 z-[60] bg-black/60 flex items-center justify-center p-3" onClick={onClose}>
+    <div className="fixed inset-0 z-[60] bg-black/60 flex items-center justify-center p-3" onClick={handleClose}>
       <div
         className="bg-[var(--bg-card)] text-[var(--text-primary)] rounded-2xl shadow-2xl w-full max-w-3xl max-h-full flex flex-col overflow-hidden"
         onClick={(e) => e.stopPropagation()}
@@ -121,7 +128,7 @@ export default function PageViewer({ target, surahs, language, onClose, onChange
             <button onClick={() => setZoom((z) => Math.min(3, z + 0.25))} className="p-2 rounded-lg hover:bg-[var(--accent)]/10" aria-label="zoom in">
               <ZoomIn className="w-4 h-4" />
             </button>
-            <button onClick={onClose} className="p-2 rounded-lg hover:bg-[var(--accent)]/10" aria-label="close">
+            <button onClick={handleClose} className="p-2 rounded-lg hover:bg-[var(--accent)]/10" aria-label="close">
               <X className="w-4 h-4" />
             </button>
           </div>
@@ -147,8 +154,8 @@ export default function PageViewer({ target, surahs, language, onClose, onChange
                 key={page}
                 src={pageUrl(page)}
                 alt={fa ? `صفحهٔ ${page} مصحف` : `صفحة ${page}`}
-                onLoad={() => setLoaded(true)}
-                onError={() => setFailed(true)}
+                onLoad={() => setLoadedImage(imageKey)}
+                onError={() => setFailedImage(imageKey)}
                 className="block w-full"
               />
               {/* the ayah that was looked up: one yellow box per line */}

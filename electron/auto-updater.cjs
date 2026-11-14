@@ -203,7 +203,7 @@ function assertPortableDirectoryWritable(executablePath) {
     fs.rmSync(probe, { force: true });
   } catch (error) {
     try { fs.rmSync(probe, { force: true }); } catch { /* best effort */ }
-    throw new Error(`The portable folder is not writable: ${error?.message || String(error)}`);
+    throw new Error(`The portable folder is not writable: ${error?.message || String(error)}`, { cause: error });
   }
 }
 

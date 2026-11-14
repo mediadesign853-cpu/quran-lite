@@ -12,11 +12,12 @@ import {
   fetchSurah,
   loadSettings,
   saveSettings,
-  DEFAULT_SETTINGS,
 } from '@/lib/quranData';
 import { recordAyahSearch, purgeLegacyStorage } from '@/lib/viewStats';
 import { addHistory } from '@/lib/history';
 import { getLastReadPosition, saveLastReadPosition } from '@/lib/lastRead';
+import { useCopyStatus } from '@/app/hooks/useCopyStatus';
+import { useServiceWorkerUpdate } from '@/app/hooks/useServiceWorkerUpdate';
 
 export default function App() {
   const [surahs, setSurahs] = useState<SurahMeta[]>([]);
@@ -28,20 +29,19 @@ export default function App() {
   const [listError, setListError] = useState(false);
   const [listRetry, setListRetry] = useState(0);
   const [surahRetry, setSurahRetry] = useState(0);
-  const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
+  const [settings, setSettings] = useState<AppSettings>(loadSettings);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [bookmarksOpen, setBookmarksOpen] = useState(false);
   const [targetAyah, setTargetAyah] = useState<number | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [viewPage, setViewPage] = useState<PageTarget | null>(null);
-  const [updateAvailable, setUpdateAvailable] = useState(false);
-  const [copyStatus, setCopyStatus] = useState<{ message: string; success: boolean } | null>(null);
+  const copyStatus = useCopyStatus();
+  const { updateAvailable, applyUpdate } = useServiceWorkerUpdate();
   const pendingTargetRef = useRef<number | null>(null);
 
   useEffect(() => {
     purgeLegacyStorage();
-    setSettings(loadSettings());
   }, []);
 
   useEffect(() => {
@@ -53,8 +53,6 @@ export default function App() {
   // Load the surah catalogue independently so a failure can be retried without a page refresh.
   useEffect(() => {
     let active = true;
-    setListLoading(true);
-    setListError(false);
     fetchSurahList()
       .then((list) => {
         if (!active) return;
@@ -85,15 +83,8 @@ export default function App() {
 
   // Ignore stale requests: fast navigation must never let an older response replace the selected surah.
   useEffect(() => {
-    if (currentSurah === null) {
-      setLoading(false);
-      return;
-    }
+    if (currentSurah === null) return;
     let active = true;
-    setLoading(true);
-    setError(null);
-    setSurahData(null);
-    setTargetAyah(null);
     fetchSurah(currentSurah)
       .then((data) => {
         if (!active) return;
@@ -120,10 +111,16 @@ export default function App() {
 
   const handleSelectSurah = useCallback((n: number) => {
     pendingTargetRef.current = null;
-    setCurrentSurah(n);
+    if (n !== currentSurah) {
+      setLoading(true);
+      setError(null);
+      setSurahData(null);
+      setTargetAyah(null);
+      setCurrentSurah(n);
+    }
     setSidebarOpen(false);
     setSearchQuery('');
-  }, []);
+  }, [currentSurah]);
 
   const handleNavigateSurah = useCallback((surahNumber: number, ayahNumber?: number, query?: string, record = true) => {
     if (query) setSearchQuery(query);
@@ -132,6 +129,10 @@ export default function App() {
       addHistory(surahNumber, ayahNumber, query);
     }
     if (surahNumber !== currentSurah) {
+      setLoading(true);
+      setError(null);
+      setSurahData(null);
+      setTargetAyah(null);
       pendingTargetRef.current = ayahNumber ?? null;
       setCurrentSurah(surahNumber);
     } else if (ayahNumber !== undefined) {
@@ -141,6 +142,9 @@ export default function App() {
   }, [currentSurah]);
 
   const handleRetrySurah = useCallback(() => {
+    setLoading(true);
+    setError(null);
+    setSurahData(null);
     setSurahRetry((value) => value + 1);
   }, []);
 
@@ -162,58 +166,6 @@ export default function App() {
     return () => window.removeEventListener('keydown', onKey);
   }, []);
 
-  // Show the result of native footnote insertion or its clipboard fallback.
-  useEffect(() => {
-    let timeout: number | undefined;
-    const onCopyStatus = (event: Event) => {
-      const detail = (event as CustomEvent<{ message: string; success: boolean }>).detail;
-      if (!detail?.message) return;
-      setCopyStatus(detail);
-      if (timeout !== undefined) window.clearTimeout(timeout);
-      timeout = window.setTimeout(() => setCopyStatus(null), detail.success ? 3500 : 10000);
-    };
-    window.addEventListener('quran:copy-status', onCopyStatus);
-    return () => {
-      window.removeEventListener('quran:copy-status', onCopyStatus);
-      if (timeout !== undefined) window.clearTimeout(timeout);
-    };
-  }, []);
-
-  useEffect(() => {
-    const onUpdateAvailable = () => setUpdateAvailable(true);
-    const hadController = 'serviceWorker' in navigator && Boolean(navigator.serviceWorker.controller);
-    let firstControllerChange = !hadController;
-    const onControllerChange = () => {
-      // Skip only the initial first-install takeover; every later worker takeover reloads
-      // this tab, even if its own update notification was delayed or missed.
-      if (firstControllerChange) {
-        firstControllerChange = false;
-        return;
-      }
-      window.location.reload();
-    };
-    window.addEventListener('quran:update-available', onUpdateAvailable);
-    if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.addEventListener('controllerchange', onControllerChange);
-      void navigator.serviceWorker.getRegistration().then((registration) => {
-        if (registration?.waiting && navigator.serviceWorker.controller) onUpdateAvailable();
-      }).catch(() => undefined);
-    }
-    return () => {
-      window.removeEventListener('quran:update-available', onUpdateAvailable);
-      if ('serviceWorker' in navigator) navigator.serviceWorker.removeEventListener('controllerchange', onControllerChange);
-    };
-  }, []);
-
-  const applyUpdate = useCallback(async () => {
-    const registration = await navigator.serviceWorker?.getRegistration();
-    if (!registration) return;
-    if (!registration.waiting) await registration.update().catch(() => undefined);
-    if (registration.waiting) {
-      registration.waiting.postMessage({ type: 'SKIP_WAITING' });
-    }
-  }, []);
-
   const handleSettingsChange = useCallback((next: AppSettings) => {
     setSettings(next);
     saveSettings(next);
@@ -228,13 +180,25 @@ export default function App() {
 
   const handlePrev = useCallback(() => {
     pendingTargetRef.current = null;
-    if (currentSurah && currentSurah > 1) setCurrentSurah(currentSurah - 1);
+    if (currentSurah && currentSurah > 1) {
+      setLoading(true);
+      setError(null);
+      setSurahData(null);
+      setTargetAyah(null);
+      setCurrentSurah(currentSurah - 1);
+    }
     setSearchQuery('');
   }, [currentSurah]);
 
   const handleNext = useCallback(() => {
     pendingTargetRef.current = null;
-    if (currentSurah && currentSurah < 114) setCurrentSurah(currentSurah + 1);
+    if (currentSurah && currentSurah < 114) {
+      setLoading(true);
+      setError(null);
+      setSurahData(null);
+      setTargetAyah(null);
+      setCurrentSurah(currentSurah + 1);
+    }
     setSearchQuery('');
   }, [currentSurah]);
 
@@ -265,7 +229,11 @@ export default function App() {
           <p className="text-[var(--text-primary)]">
             {settings.language === 'fa' ? 'فهرست سوره‌ها بارگذاری نشد.' : 'تعذّر تحميل قائمة السور.'}
           </p>
-          <button onClick={() => setListRetry((value) => value + 1)} className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-[var(--accent)] text-white">
+          <button onClick={() => {
+            setListLoading(true);
+            setListError(false);
+            setListRetry((value) => value + 1);
+          }} className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-[var(--accent)] text-white">
             <RefreshCw className="w-4 h-4" />
             {settings.language === 'fa' ? 'تلاش دوباره' : 'إعادة المحاولة'}
           </button>

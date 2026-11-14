@@ -30,9 +30,16 @@ export default function BookmarksPanel({ isOpen, onClose, language, onNavigate }
   ]
     .sort((a, b) => a - b)
     .join(','); 
-  const [surahData, setSurahData] = useState<Record<number, SurahDisplayData>>({});
-  const [loading, setLoading] = useState(false);
-  const [loadError, setLoadError] = useState(false);
+  const [loadState, setLoadState] = useState<
+    | { key: string; status: 'loaded'; data: Record<number, SurahDisplayData> }
+    | { key: string; status: 'error' }
+    | null
+  >(null);
+  const loading = Boolean(isOpen && surahNumbersKey && loadState?.key !== surahNumbersKey);
+  const loadError = Boolean(surahNumbersKey && loadState?.key === surahNumbersKey && loadState.status === 'error');
+  const displaySurahData = loadState?.key === surahNumbersKey && loadState.status === 'loaded'
+    ? loadState.data
+    : {};
   const dialogRef = useRef<HTMLElement>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
 
@@ -52,19 +59,12 @@ export default function BookmarksPanel({ isOpen, onClose, language, onNavigate }
   // Load display labels and ayah text from the canonical Quran files; the bookmark store itself
   // contains only surah/ayah IDs so it never becomes stale after a text or metadata correction.
   useEffect(() => {
-    if (!isOpen || !surahNumbersKey) {
-      setSurahData({});
-      setLoading(false);
-      setLoadError(false);
-      return;
-    }
+    if (!isOpen || !surahNumbersKey) return;
   
     let active = true;
   
     const numbers = surahNumbersKey.split(',').map(Number);
   
-    setLoading(true);
-    setLoadError(false);
   
     Promise.all([
       fetchSurahList(),
@@ -97,13 +97,10 @@ export default function BookmarksPanel({ isOpen, onClose, language, onNavigate }
           }
         }
   
-        setSurahData(next);
+        setLoadState({ key: surahNumbersKey, status: 'loaded', data: next });
       })
       .catch(() => {
-        if (active) setLoadError(true);
-      })
-      .finally(() => {
-        if (active) setLoading(false);
+        if (active) setLoadState({ key: surahNumbersKey, status: 'error' });
       });
   
     return () => {
@@ -171,7 +168,7 @@ export default function BookmarksPanel({ isOpen, onClose, language, onNavigate }
               {loading && <p className="px-3 py-2 text-xs text-[var(--text-secondary)]" role="status">{t ? 'در حال بارگذاری آیه‌ها…' : 'جارٍ تحميل الآيات…'}</p>}
               {loadError && <p className="px-3 py-2 text-xs text-amber-700" role="alert">{t ? 'بارگذاری متن برخی آیه‌ها ناموفق بود؛ می‌توانید با شماره به آن‌ها بروید.' : 'تعذّر تحميل بعض الآيات؛ يمكنك الانتقال إليها بأرقامها.'}</p>}
               {bookmarks.map((bm: BookmarkEntry) => {
-                const detail = surahData[bm.surahNumber];
+                const detail = displaySurahData[bm.surahNumber];
                 const name = detail?.meta.name ?? (t ? `سورهٔ ${bm.surahNumber}` : `سورة ${bm.surahNumber}`);
                 const englishName = detail?.meta.englishName ?? '';
                 const text = detail?.ayahs[bm.ayahNumber - 1] ?? '';

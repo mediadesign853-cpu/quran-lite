@@ -59,7 +59,6 @@ export default function SearchBar({ surahs, currentSurah, language, onNavigateSu
   // The index is one small file: load it right away so the first search is instant too.
   useEffect(() => {
     let active = true;
-    setIndexError(false);
     loadSearchIndex()
       .then((loaded) => { if (active) setIndex(loaded); })
       .catch(() => { if (active) setIndexError(true); });
@@ -110,6 +109,7 @@ export default function SearchBar({ surahs, currentSurah, language, onNavigateSu
   const loadingIndex = !index && !indexError && query.trim() !== '';
   const retryIndex = () => {
     setIndex(null);
+    setIndexError(false);
     setIndexAttempt((attempt) => attempt + 1);
   };
 

@@ -10,6 +10,7 @@
  *  - activate: deletes old caches only after the user accepts an update, then takes control.
  *  - updates wait for approval so old application code is never paired with a newly replaced cache.
  */
+/* global __PRECACHE_URLS__ */
 const PRECACHE = '__PRECACHE_NAME__';
 const PRECACHE_URLS = __PRECACHE_URLS__;
 const CACHE_PREFIX = 'quran-reader-';
@@ -60,10 +61,10 @@ self.addEventListener('fetch', (event) => {
   if (request.method !== 'GET') return;
   const url = new URL(request.url);
   if (url.origin !== self.location.origin || !url.pathname.startsWith(SCOPE_PATH)) return;
-  event.respondWith(respond(request, url.pathname.slice(SCOPE_PATH.length)));
+  event.respondWith(respond(request));
 });
 
-async function respond(request, relativePath) {
+async function respond(request) {
   // opening the app (any address inside it): serve the app shell
   // Look only in this worker's cache namespace. A newly installed but not yet approved
   // worker has a different cache; global caches.match() would expose its files too early.

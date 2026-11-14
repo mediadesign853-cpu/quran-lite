@@ -23,11 +23,19 @@ jobs:
           node-version: 22
           cache: npm
 
+      - name: Set up Python for Quran text regression tests
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.x'
+
       - name: Verify Portable update public key
         run: node scripts/verify-portable-update-key.cjs
 
       - name: Install dependencies
         run: npm ci
+
+      - name: Audit dependencies
+        run: npm audit --audit-level=moderate
 
       - name: Run project checks
         run: npm run check

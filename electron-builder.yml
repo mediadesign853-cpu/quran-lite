@@ -1,7 +1,7 @@
 # Windows installer (NSIS): npm run dist:win -> release/Quran Reader Lite Setup <version>.exe
 appId: com.quranreader.lite
 productName: Quran Reader Lite
-copyright: Quran text © Tanzil Project (CC BY 3.0)
+copyright: "Quran text © Tanzil Project (CC BY 3.0)"
 
 directories:
   output: release
@@ -10,6 +10,8 @@ directories:
 # Keep the desktop shell and bundled update module alongside the built web app.
 files:
   - electron/main.cjs
+  - electron/security.cjs
+  - electron/protocol-handlers.cjs
   - electron/preload.cjs
   - electron/auto-updater.bundle.cjs
   - electron/portable-update-public.pem

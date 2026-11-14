@@ -46,13 +46,12 @@ assert.equal(ayahTotal, 6236, 'Expected 6,236 ayahs in total');
 // Mushaf images are optional for the web app; Electron enables the page viewer only
 // when the full set of 604 pages and the ayah-coordinate file are present.
 const pagesDir = join(root, 'electron', 'pages');
-let pageImages = 0;
 let pageImagesComplete = false;
 if (existsSync(pagesDir)) {
   const names = new Set(readdirSync(pagesDir));
-  pageImages = [...names].filter((name) => /^\d+\.webp$/.test(name)).length;
+  const pageImageCount = [...names].filter((name) => /^\d+\.webp$/.test(name)).length;
   pageImagesComplete = names.has('boxes.json') && Array.from({ length: 604 }, (_, index) => `${index + 1}.webp`).every((name) => names.has(name));
-  if (pageImages > 0) assert.equal(pageImagesComplete, true, 'Partial Mushaf image set: include all 604 pages and boxes.json or remove the partial set');
+  if (pageImageCount > 0) assert.equal(pageImagesComplete, true, 'Partial Mushaf image set: include all 604 pages and boxes.json or remove the partial set');
 }
 
 console.log(`Data verification passed: ${surahs.length} surahs, ${ayahTotal} ayahs, 0 translation/tafsir resources.`);

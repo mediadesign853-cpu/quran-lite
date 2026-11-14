@@ -7,6 +7,11 @@ import argparse
 import re, json, shutil, sys
 from pathlib import Path
 
+try:
+    from .quran_text import normalize_for_comparison, normalize_quran_text
+except ImportError:  # support direct execution: python tools/build_data.py
+    from quran_text import normalize_for_comparison, normalize_quran_text
+
 ROOT = Path(__file__).resolve().parents[1]
 parser = argparse.ArgumentParser(description="Build Quran Reader Arabic text and search index")
 parser.add_argument("--sql", type=Path, default=ROOT / "sources" / "quran-simple.sql")
@@ -52,7 +57,7 @@ s=SQL_FILE.read_text(encoding='utf-8')
 rows=re.findall(r"\((\d+),\s*(\d+),\s*(\d+),\s*'((?:[^'\\]|\\.|'')*)'\)",s)
 assert len(rows)==6236
 T={(int(r[1]),int(r[2])):r[3].replace("''","'") for r in rows}
-def nm(x): return re.sub('[\u0610-\u061A\u064B-\u065F\u0670\u0640]','',x).replace('ٱ','ا').replace('أ','ا').replace('إ','ا').replace('آ','ا')
+def nm(x): return normalize_for_comparison(x)  # comparison only; never use this for output text
 bas=T[(1,1)]; bw=bas.split(' '); assert len(bw)==4
 stripped=0
 BIS={}                                    # surah -> its Bismillah heading: the SQL file's own text of 1:1
@@ -61,8 +66,9 @@ for su in range(2,115):
     if su==9: assert nm(' '.join(w[:4]))!=nm(bas); continue
     assert nm(' '.join(w[:4]))==nm(bas),(su,t[:40])
     BIS[su]=bas; T[(su,1)]=' '.join(w[4:]); stripped+=1; assert T[(su,1)]
-for k,v in T.items():
-    v=re.sub(r'[\u0610-\u061A\u064B-\u065F\u0670\u0640]', '', v); T[k]=re.sub(r'\s{2,}',' ',v).strip()
+for k, v in T.items():
+    # Preserve all harakat and Quranic annotation marks in stored text.
+    T[k] = normalize_quran_text(v)
 print('basmala prefix removed from',stripped,'surahs')
 # ---- 2) per-surah files in the existing structure, one Arabic edition (Tanzil simple)
 meta=json.load(open(f'{OLD}/surahs.json',encoding='utf-8'))
